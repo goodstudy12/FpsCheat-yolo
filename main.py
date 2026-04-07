@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import sys
+sys.path.insert(0, r"D:\python_packages")
 import math
 import threading
 import time
@@ -39,8 +41,10 @@ def keyboard_listener():
 def run():
     global is_active
     # 加载模型
-    device = torch.device('cpu')
-    model = DetectMultiBackend(weights='./weights/Valorant.pt', device=device, dnn=False, data=False, fp16=False)
+    device = torch.device('cuda:0')
+    model = DetectMultiBackend(weights='./weights/Valorant.pt', device=device, dnn=False, data=False, fp16=True)
+    # device = torch.device('cpu')
+    # model = DetectMultiBackend(weights='./weights/Valorant.pt', device=device, dnn=False, data=False, fp16=False)
 
     half_size = overlay.size // 2  # 320
 
