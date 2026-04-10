@@ -12,7 +12,7 @@ from utils.general import (cv2, non_max_suppression, scale_boxes, xyxy2xywh)
 from utils.plots import Annotator
 from utils.torch_utils import smart_inference_mode
 
-from SendInput import mouse_xy
+from SendInput import mouse_xy, smooth_move
 from ScreenShot import screenshot
 from OverlayWindow import OverlayWindow
 
@@ -29,6 +29,7 @@ def on_key_press(key):
     global is_active
     if key == keyboard.Key.f1:
         is_active = not is_active
+        overlay.update_status(is_active)
         print(f"[F1] 自瞄已{'开启' if is_active else '暂停'}")
 
 
@@ -47,6 +48,7 @@ def run():
     # model = DetectMultiBackend(weights='./weights/Valorant.pt', device=device, dnn=False, data=False, fp16=False)
 
     half_size = overlay.size // 2  # 320
+    frame_count = 0  # 帧计数器，用于控制可视化频率
 
     # 读取图片
     while True:
@@ -73,44 +75,58 @@ def run():
 
         # 处理推理内容
         for i, det in enumerate(pred):
-            # 画框
-            annotator = Annotator(im0, line_width=2)
             if len(det):
-                distance_list = []  # 距离列表
-                target_list = []  # 敌人列表
                 # 将转换后的图片画框结果转换成原图上的结果
                 det[:, :4] = scale_boxes(im.shape[2:], det[:, :4], im0.shape).round()
-                for *xyxy, conf, cls in reversed(det):
-                    xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4))).view(-1).tolist()
 
-                    # 鼠标移动值（相对选区中心的偏移）
-                    X = xywh[0] - half_size
-                    Y = xywh[1] - half_size
+                # 快速计算所有目标到中心的距离，找到最近目标
+                xywh_all = xyxy2xywh(det[:, :4])  # 批量转换，避免逐个循环
+                dx_all = xywh_all[:, 0] - half_size
+                dy_all = xywh_all[:, 1] - half_size
+                distances = torch.sqrt(dx_all ** 2 + dy_all ** 2)
+                min_idx = torch.argmin(distances).item()
 
-                    distance = math.sqrt(X ** 2 + Y ** 2)
-                    xywh.append(distance)
-                    annotator.box_label(xyxy, label=f'[{int(cls)}Distance:{round(distance, 2)}]',
-                                        color=(34, 139, 34),
-                                        txt_color=(0, 191, 255))
-
-                    distance_list.append(distance)
-                    target_list.append(xywh)
-
-                # 获取距离最小的目标
-                target_info = target_list[distance_list.index(min(distance_list))]
-                print(f"目标信息：{target_info}")
-
+                # 自瞄激活时，使用平滑移动（动态速度 + 头部偏移 + 跳变检测）
                 if is_active:
-                    # 目标相对选区中心的偏移量，即鼠标需要的相对位移
-                    dx = int(target_info[0]) - half_size
-                    dy = int(target_info[1]) - half_size
-                    # 灵敏度系数：>1 加速，<1 减速，根据实际效果调整
-                    sensitivity = 4.0
-                    mouse_xy(int(dx * sensitivity), int(dy * sensitivity))
+                    dx = int(round(dx_all[min_idx].item()))
+                    dy = int(round(dy_all[min_idx].item()))
+                    # 获取检测框高度，用于头部偏移计算
+                    box_h = int(round((det[min_idx, 3] - det[min_idx, 1]).item()))
+                    smooth_move(dx, dy, box_h)
 
-            im0 = annotator.result()
-            cv2.imshow('window', im0)
-            cv2.waitKey(1)
+                # 可视化部分：自瞄激活时每 5 帧才绘制一次，减少开销
+                frame_count += 1
+                if not is_active or frame_count % 5 == 0:
+                    annotator = Annotator(im0, line_width=2)
+                    overlay_dets = []
+                    for idx in range(det.shape[0]):
+                        xyxy = det[idx, :4]
+                        conf_val = det[idx, 4].item()
+                        cls = det[idx, 5].item()
+                        dist = distances[idx].item()
+                        is_target = (idx == min_idx)
+                        annotator.box_label(xyxy,
+                                            label=f'[{int(cls)}D:{dist:.0f}]',
+                                            color=(34, 139, 34),
+                                            txt_color=(0, 191, 255))
+                        xyxy_int = [int(v.item()) for v in xyxy]
+                        overlay_dets.append({
+                            "xyxy": xyxy_int,
+                            "label": f"D:{dist:.0f} C:{conf_val:.2f}",
+                            "color": "#FF4444" if is_target else "#00FF00",
+                            "is_target": is_target,
+                        })
+                    if overlay_dets:
+                        overlay.draw_detections(overlay_dets)
+                    im0 = annotator.result()
+                    cv2.imshow('window', im0)
+                    cv2.waitKey(1)
+                else:
+                    # 自瞄激活时跳过绘制，只做最小化 UI 刷新
+                    cv2.waitKey(1)
+            else:
+                overlay.clear_detections()
+                cv2.waitKey(1)
 
 
 if __name__ == "__main__":

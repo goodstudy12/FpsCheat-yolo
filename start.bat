@@ -1,1 +1,1 @@
-python main_nonblock.py
+python main.py

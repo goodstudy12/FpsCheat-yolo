@@ -26,7 +26,7 @@ import os
 "游戏与桌面分辨率不一致时需要开启全屏模式，不能是无边框窗口"
 "鼠标移动在fov为90的游戏中下最准确 其他fov能用，但可能效果没那么好"
 parser = argparse.ArgumentParser()
-parser.add_argument('--model-path', type=str, default='aim_csgo/models/best_csgo.pt', help='模型地址')
+parser.add_argument('--model-path', type=str, default='weights/valorant1.pt', help='模型地址')
 # parser.add_argument('--model-path', type=str, default='weights/csgo.pt', help='模型地址')
 parser.add_argument('--imgsz', type=int, default=640, help='和你训练模型时imgsz一样')
 parser.add_argument('--conf-thres', type=float, default=0.6, help='置信阈值')
@@ -39,7 +39,7 @@ parser.add_argument('--top-most', type=bool, default=True, help='是否保持实
 parser.add_argument('--resize-window', type=float, default=1 / 2, help='缩放实时检测窗口大小')
 parser.add_argument('--thickness', type=int, default=3, help='画框粗细，必须大于1/resize-window')
 parser.add_argument('--show-fps', type=bool, default=True, help='是否显示帧率')
-parser.add_argument('--show-label', type=bool, default=False, help='是否显示标签')
+parser.add_argument('--show-label', type=bool, default=True, help='是否显示标签')
 
 parser.add_argument('--use_mss', type=str, default=True, help='是否使用mss截屏；为False时使用win32截屏，自行比对速度')
 
