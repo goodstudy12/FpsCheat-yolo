@@ -365,7 +365,11 @@ class DetectMultiBackend(nn.Module):
             LOGGER.info(f'Loading {w} for ONNX Runtime inference...')
             check_requirements(('onnx', 'onnxruntime-gpu' if cuda else 'onnxruntime'))
             import onnxruntime
-            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if cuda else ['CPUExecutionProvider']
+            # 优先使用 TensorRT EP（首次运行会编译引擎并缓存，后续启动更快）
+            if cuda:
+                providers = ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
+            else:
+                providers = ['CPUExecutionProvider']
             session = onnxruntime.InferenceSession(w, providers=providers)
             output_names = [x.name for x in session.get_outputs()]
             meta = session.get_modelmeta().custom_metadata_map  # metadata

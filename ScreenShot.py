@@ -23,6 +23,6 @@ def screenshot(region):
         "height": bottom - top,
     }
     img = Screenshot_value.grab(monitor)
-    img = np.array(img)
-    img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+    # 直接丢弃 alpha 通道，避免 cvtColor 全图转换开销
+    img = np.ascontiguousarray(np.array(img, dtype=np.uint8)[:, :, :3])
     return img
