@@ -49,9 +49,20 @@ def run():
 
     half_size = overlay.size // 2  # 320
     frame_count = 0  # 帧计数器，用于控制可视化频率
+    # 帧率统计
+    fps_timer = time.time()
+    fps_count = 0
 
     # 读取图片
     while True:
+        # 帧率计算：每秒更新一次
+        fps_count += 1
+        now = time.time()
+        if now - fps_timer >= 1.0:
+            overlay.update_fps(fps_count / (now - fps_timer))
+            fps_count = 0
+            fps_timer = now
+
         # 从选区窗口的当前位置截图
         region = overlay.region
         im = screenshot(region)

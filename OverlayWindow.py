@@ -22,6 +22,8 @@ class OverlayWindow:
         self._draw_ids = []
         # 自瞄状态文字 id
         self._status_id = None
+        # 帧率显示文字 id
+        self._fps_id = None
 
     @property
     def region(self):
@@ -118,6 +120,13 @@ class OverlayWindow:
             font=("Microsoft YaHei", 10, "bold")
         )
 
+        # 帧率显示（右上角，边框内侧）
+        self._fps_id = canvas.create_text(
+            win_size - bw - 22, bw + 2, anchor="ne",
+            text="FPS: --", fill="#FFFF00",
+            font=("Consolas", 10, "bold")
+        )
+
         self._canvas = canvas
         self._ready.set()
         root.mainloop()
@@ -185,6 +194,16 @@ class OverlayWindow:
             text = "自瞄：开" if active else "自瞄：关"
             color = "#00FF00" if active else "#FF4444"
             self._canvas.itemconfig(self._status_id, text=text, fill=color)
+
+    def update_fps(self, fps: float):
+        """线程安全地更新帧率显示"""
+        if self._root and self._canvas:
+            self._root.after(0, self._do_update_fps, fps)
+
+    def _do_update_fps(self, fps: float):
+        """在 tkinter 主线程中更新帧率文字"""
+        if self._fps_id:
+            self._canvas.itemconfig(self._fps_id, text=f"FPS: {fps:.0f}")
 
     def clear_detections(self):
         """清除所有检测框绘制"""
