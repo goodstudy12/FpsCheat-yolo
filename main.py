@@ -10,25 +10,30 @@ from utils.general import (cv2, non_max_suppression, scale_boxes, xyxy2xywh)
 from utils.plots import Annotator
 from utils.torch_utils import smart_inference_mode
 
-from SendInput import mouse_xy, smooth_move
+from SendInput import mouse_xy, smooth_move, recoil_compensate
 from ScreenShot import screenshot
 from OverlayWindow import OverlayWindow
 
 from pynput import keyboard
 
-# F1 切换开关：按一次开启，再按一次暂停
+# F1 切换自瞄，F2 切换压枪
 is_active = False
+is_recoil = False
 
 # 选区窗口（640x640 置顶透明框，可拖动定位）
 overlay = OverlayWindow(size=640)
 
 
 def on_key_press(key):
-    global is_active
+    global is_active, is_recoil
     if key == keyboard.Key.f1:
         is_active = not is_active
         overlay.update_status(is_active)
         print(f"[F1] 自瞄已{'开启' if is_active else '暂停'}")
+    elif key == keyboard.Key.f2:
+        is_recoil = not is_recoil
+        overlay.update_recoil(is_recoil)
+        print(f"[F2] 压枪已{'开启' if is_recoil else '暂停'}")
 
 
 def keyboard_listener():
@@ -90,6 +95,10 @@ def run():
         pred = model(input_buffer, augment=False, visualize=False)
         # 非极大值抑制  classes=0 只检测人
         pred = non_max_suppression(pred, conf_thres=0.6, iou_thres=0.45, classes=0, max_det=1000)
+
+        # 压枪补偿：每帧独立执行，不依赖目标检测
+        if is_recoil:
+            recoil_compensate()
 
         # 处理推理内容
         for i, det in enumerate(pred):

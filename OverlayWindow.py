@@ -22,6 +22,8 @@ class OverlayWindow:
         self._draw_ids = []
         # 自瞄状态文字 id
         self._status_id = None
+        # 压枪状态文字 id
+        self._recoil_id = None
         # 帧率显示文字 id
         self._fps_id = None
 
@@ -120,6 +122,13 @@ class OverlayWindow:
             font=("Microsoft YaHei", 10, "bold")
         )
 
+        # 压枪状态文字（自瞄状态下方）
+        self._recoil_id = canvas.create_text(
+            bw + 22, bw + 20, anchor="nw",
+            text="压枪：关", fill="#FF4444",
+            font=("Microsoft YaHei", 10, "bold")
+        )
+
         # 帧率显示（右上角，边框内侧）
         self._fps_id = canvas.create_text(
             win_size - bw - 22, bw + 2, anchor="ne",
@@ -194,6 +203,18 @@ class OverlayWindow:
             text = "自瞄：开" if active else "自瞄：关"
             color = "#00FF00" if active else "#FF4444"
             self._canvas.itemconfig(self._status_id, text=text, fill=color)
+
+    def update_recoil(self, active: bool):
+        """线程安全地更新压枪状态显示"""
+        if self._root and self._canvas:
+            self._root.after(0, self._do_update_recoil, active)
+
+    def _do_update_recoil(self, active: bool):
+        """在 tkinter 主线程中更新压枪状态文字"""
+        if self._recoil_id:
+            text = "压枪：开" if active else "压枪：关"
+            color = "#00FF00" if active else "#FF4444"
+            self._canvas.itemconfig(self._recoil_id, text=text, fill=color)
 
     def update_fps(self, fps: float):
         """线程安全地更新帧率显示"""

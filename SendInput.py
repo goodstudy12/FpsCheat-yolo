@@ -1,5 +1,6 @@
 # 鼠标移动
 import math
+import time
 from ctypes import windll, c_long, c_ulong, Structure, Union, c_int, POINTER, sizeof
 
 LONG = c_long
@@ -161,6 +162,81 @@ def smooth_move(dx, dy, box_h=0):
     move_y = int(round(move_y_f))
     _residual_x = move_x_f - move_x
     _residual_y = move_y_f - move_y
+
+    if move_x == 0 and move_y == 0:
+        return
+
+    mouse_xy(move_x, move_y)
+
+
+# ============ 压枪（反后坐力补偿）配置 ============
+RECOIL_STRENGTH_Y = 3.0       # 基础垂直补偿强度（像素/帧），越大压枪力度越强
+RECOIL_STRENGTH_X = 0.0       # 水平补偿强度（像素/帧），部分武器有水平后坐力时调整
+RECOIL_RAMP_TIME = 0.8        # 后坐力爬升时间（秒），从 0 线性增长到满强度
+RECOIL_MAX_MULT = 2.0         # 最大倍率：持续射击时后坐力从 1x 增长到此倍率
+RECOIL_SMOOTH = 0.6           # 压枪平滑系数（0~1），越小越平滑
+
+# 压枪内部状态
+_recoil_start_time = 0.0      # 本轮射击开始时间
+_recoil_active = False         # 上一帧是否在射击
+_recoil_residual_x = 0.0      # 亚像素残差 X
+_recoil_residual_y = 0.0      # 亚像素残差 Y
+
+
+def is_left_button_down():
+    """检测鼠标左键是否按下（通过 GetAsyncKeyState）"""
+    # 0x01 = VK_LBUTTON，返回值最高位为 1 表示当前按下
+    return (windll.user32.GetAsyncKeyState(0x01) & 0x8000) != 0
+
+
+def recoil_compensate():
+    """
+    压枪补偿：在鼠标左键按住（射击）时，每帧自动向下移动鼠标抵消后坐力。
+
+    特性：
+    1. 线性爬升：射击前期补偿较小，持续射击后逐渐增强（模拟后坐力递增）
+    2. 亚像素累积：浮点精度计算，避免 int 截断导致补偿不均匀
+    3. 松开左键后自动重置状态，下次射击重新开始爬升
+    """
+    global _recoil_start_time, _recoil_active
+    global _recoil_residual_x, _recoil_residual_y
+
+    shooting = is_left_button_down()
+
+    if not shooting:
+        # 松开左键，重置状态
+        if _recoil_active:
+            _recoil_active = False
+            _recoil_residual_x = 0.0
+            _recoil_residual_y = 0.0
+        return
+
+    # 刚开始射击，记录起始时间
+    if not _recoil_active:
+        _recoil_active = True
+        _recoil_start_time = time.time()
+        _recoil_residual_x = 0.0
+        _recoil_residual_y = 0.0
+
+    # 计算射击持续时间与爬升倍率
+    elapsed = time.time() - _recoil_start_time
+    if RECOIL_RAMP_TIME > 0:
+        # 线性爬升：0s → 1x，RECOIL_RAMP_TIME → RECOIL_MAX_MULT
+        ramp = 1.0 + (RECOIL_MAX_MULT - 1.0) * min(elapsed / RECOIL_RAMP_TIME, 1.0)
+    else:
+        ramp = RECOIL_MAX_MULT
+
+    # 计算本帧补偿量（向下为正 Y）
+    comp_y = RECOIL_STRENGTH_Y * ramp * RECOIL_SMOOTH
+    comp_x = RECOIL_STRENGTH_X * ramp * RECOIL_SMOOTH
+
+    # 亚像素累积
+    comp_x += _recoil_residual_x
+    comp_y += _recoil_residual_y
+    move_x = int(round(comp_x))
+    move_y = int(round(comp_y))
+    _recoil_residual_x = comp_x - move_x
+    _recoil_residual_y = comp_y - move_y
 
     if move_x == 0 and move_y == 0:
         return
