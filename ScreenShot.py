@@ -5,8 +5,17 @@ import cv2
 import numpy as np
 from mss import mss
 
-# 实例化 mss
-Screenshot_value = mss()
+import threading
+
+# 每个线程持有自己的 mss 实例（mss 内部使用 thread-local 句柄，不能跨线程共享）
+_local = threading.local()
+
+
+def _get_mss():
+    """返回当前线程的 mss 实例，首次调用时自动创建"""
+    if not hasattr(_local, "sct"):
+        _local.sct = mss()
+    return _local.sct
 
 
 def screenshot(region):
@@ -22,7 +31,7 @@ def screenshot(region):
         "width": right - left,
         "height": bottom - top,
     }
-    img = Screenshot_value.grab(monitor)
+    img = _get_mss().grab(monitor)
     # 直接丢弃 alpha 通道，避免 cvtColor 全图转换开销
     img = np.ascontiguousarray(np.array(img, dtype=np.uint8)[:, :, :3])
     return img
