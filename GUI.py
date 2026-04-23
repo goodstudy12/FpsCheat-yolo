@@ -93,6 +93,7 @@ class ConfigGUI:
         self.fov_size_var   = None  # 截图范围
         self.model_var      = None  # 模型路径
         self.fp16_var       = None  # FP16 精度
+        self.predict_var    = None  # 运动预测强度
 
         # 状态标签引用（用于实时刷新）
         self._fps_lbl      = None
@@ -138,6 +139,7 @@ class ConfigGUI:
                 "fov_size":         int(self.fov_size_var.get()),
                 "model":            self.model_var.get(),
                 "fp16":             bool(self.fp16_var.get()),
+                "predict_strength": float(self.predict_var.get()),
             }
         except Exception:
             return {}
@@ -200,6 +202,7 @@ class ConfigGUI:
         self.fov_size_var   = tk.IntVar(value=640)
         self.model_var      = tk.StringVar(value="./weights/Valorant.pt")
         self.fp16_var       = tk.BooleanVar(value=True)
+        self.predict_var    = tk.DoubleVar(value=0.5)
 
     def _poll_state(self):
         """每 200ms 轮询共享状态并刷新 GUI 显示"""
@@ -556,7 +559,7 @@ class ConfigGUI:
             ("鼠标移动",  self.smooth_var,    0.5,  8.0,  0.01, "2.50", True),
             ("瞄准1范围", self.aim_range_var, 30,   800,  1,    "141",  False),
             ("瞄准2范围", tk.DoubleVar(value=141), 30, 800, 1, "141",  False),
-            ("预测算法",  self.ema_alpha_var,  0.0,  1.0,  0.01, "0.44", True),
+            ("预测强度",  self.predict_var,    0.0,  2.0,  0.05, "0.50", True),
             ("压枪力度",  self.recoil_y_var,   0.0, 10.0,  0.1,  "3.0",  True),
         ]
 

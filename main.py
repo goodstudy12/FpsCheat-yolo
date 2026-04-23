@@ -121,6 +121,7 @@ def run():
         _si.EMA_ALPHA    = cfg.get("ema_alpha", 0.4)
         _si.DEAD_ZONE    = cfg.get("dead_zone", 3.0)
         _si.RECOIL_STRENGTH_Y = cfg.get("recoil_strength_y", 3.0)
+        _si.PREDICT_STRENGTH  = cfg.get("predict_strength", 0.5)
         # 重新计算 _K（atan 平滑系数依赖 LOCK_SMOOTH）
         import math
         _si._K = 4.07 * (1.0 / max(_si.LOCK_SMOOTH, 0.1))
