@@ -18,6 +18,13 @@ from GUI import ConfigGUI, SharedState
 
 from pynput import keyboard
 
+# TensorRT-YOLO 后端（可选）
+try:
+    from trtyolo import TRTYOLO
+    HAS_TRTYOLO = True
+except ImportError:
+    HAS_TRTYOLO = False
+
 # ─── 全局共享状态 ────────────────────────────────────────────
 state = SharedState()
 
@@ -64,9 +71,11 @@ def run():
 
     # 从 GUI 读取硬件配置（仅在启动时读取一次）
     cfg = gui.get_config()
-    fov_size  = cfg.get("fov_size", 640)
+    fov_size   = cfg.get("fov_size", 640)
     model_path = cfg.get("model", "./weights/Valorant.pt")
-    use_fp16  = cfg.get("fp16", True)
+    use_fp16   = cfg.get("fp16", True)
+    backend    = cfg.get("backend", "auto")
+
     # 安全解析 CUDA 设备 ID（格式："CUDA:0 (设备名)"）
     try:
         gpu_str = cfg.get("gpu", "CUDA:0")
@@ -87,19 +96,33 @@ def run():
     else:
         overlay.size = fov_size
 
-    model = DetectMultiBackend(
-        weights=model_path, device=device,
-        dnn=False, data=False, fp16=use_fp16
-    )
+    # ── 选择推理后端 ──────────────────────────────────────────
+    use_trtyolo = False
+    if backend == "trtyolo" or (backend == "auto" and model_path.endswith(".engine")):
+        if HAS_TRTYOLO:
+            use_trtyolo = True
+        else:
+            print("[警告] trtyolo 未安装，回退到默认后端")
 
-    half_size  = overlay.size // 2
+    if use_trtyolo:
+        model = TRTYOLO(model_path, task="detect", swap_rb=True)
+        print(f"[后端] TensorRT-YOLO（{model_path}）")
+    else:
+        model = DetectMultiBackend(
+            weights=model_path, device=device,
+            dnn=False, data=False, fp16=use_fp16
+        )
+        print(f"[后端] DetectMultiBackend（{model_path}）")
+
+    half_size   = overlay.size // 2
     frame_count = 0
-    fps_timer  = time.time()
-    fps_count  = 0
+    fps_timer   = time.time()
+    fps_count   = 0
 
-    img_size = overlay.size
-    dtype    = torch.float16 if model.fp16 else torch.float32
-    input_buf = torch.zeros((1, 3, img_size, img_size), dtype=dtype, device=device)
+    if not use_trtyolo:
+        img_size  = overlay.size
+        dtype     = torch.float16 if model.fp16 else torch.float32
+        input_buf = torch.zeros((1, 3, img_size, img_size), dtype=dtype, device=device)
 
     print("[推理] 开始……")
     while state.running:
@@ -116,90 +139,109 @@ def run():
         # ── 每帧读取运行时配置（允许 GUI 实时调参）────────────
         cfg = gui.get_config()
         conf_thres = cfg.get("conf_thres", 0.6)
-        # 将 GUI 滑块值同步到 SendInput 全局参数
         _si.LOCK_SMOOTH  = cfg.get("lock_smooth", 2.5)
         _si.EMA_ALPHA    = cfg.get("ema_alpha", 0.4)
         _si.DEAD_ZONE    = cfg.get("dead_zone", 3.0)
         _si.RECOIL_STRENGTH_Y = cfg.get("recoil_strength_y", 3.0)
         _si.PREDICT_STRENGTH  = cfg.get("predict_strength", 0.5)
-        # 重新计算 _K（atan 平滑系数依赖 LOCK_SMOOTH）
         import math
         _si._K = 4.07 * (1.0 / max(_si.LOCK_SMOOTH, 0.1))
 
-        is_active  = state.is_active
-        is_recoil  = state.is_recoil
+        is_active = state.is_active
+        is_recoil = state.is_recoil
 
-        # ── 截图 + 预处理 ──────────────────────────────────────
+        # ── 截图 ──────────────────────────────────────────────
         region = overlay.region
         im0    = screenshot(region)
 
-        im = im0[:, :, ::-1].transpose((2, 0, 1))
-        input_buf[0] = torch.from_numpy(np.ascontiguousarray(im)).to(dtype=dtype)
-        input_buf.div_(255.0)
-
-        # ── 推理 ───────────────────────────────────────────────
-        pred = model(input_buf, augment=False, visualize=False)
-        pred = non_max_suppression(pred, conf_thres=conf_thres,
-                                   iou_thres=0.45, classes=0, max_det=1000)
+        # ── 推理 + NMS ────────────────────────────────────────
+        # 两个后端统一输出: xyxy_np [N,4], conf_np [N], cls_np [N]
+        if use_trtyolo:
+            result = model.predict(im0)
+            if result is not None and len(result) > 0:
+                xyxy_np = result.xyxy
+                conf_np = result.confidence
+                cls_np  = result.class_id
+                mask = (cls_np == 0) & (conf_np >= conf_thres)
+                xyxy_np = xyxy_np[mask]
+                conf_np = conf_np[mask]
+                cls_np  = cls_np[mask]
+                n_det = len(xyxy_np)
+            else:
+                n_det = 0
+        else:
+            im = im0[:, :, ::-1].transpose((2, 0, 1))
+            input_buf[0] = torch.from_numpy(np.ascontiguousarray(im)).to(dtype=dtype)
+            input_buf.div_(255.0)
+            pred = model(input_buf, augment=False, visualize=False)
+            pred = non_max_suppression(pred, conf_thres=conf_thres,
+                                       iou_thres=0.45, classes=0, max_det=1000)
+            det = pred[0] if pred else torch.zeros((0, 6))
+            if len(det):
+                det[:, :4] = scale_boxes(
+                    input_buf.shape[2:], det[:, :4], im0.shape).round()
+                xyxy_np = det[:, :4].cpu().numpy()
+                conf_np = det[:, 4].cpu().numpy()
+                cls_np  = det[:, 5].cpu().numpy()
+                n_det = len(xyxy_np)
+            else:
+                n_det = 0
 
         # ── 压枪补偿（每帧执行，不依赖目标检测）──────────────
         if is_recoil:
             recoil_compensate()
 
-        # ── 检测结果处理 ───────────────────────────────────────
-        for i, det in enumerate(pred):
-            if len(det):
-                det[:, :4] = scale_boxes(
-                    input_buf.shape[2:], det[:, :4], im0.shape).round()
+        # ── 检测结果处理（统一 numpy 格式）─────────────────────
+        if n_det > 0:
+            cx = (xyxy_np[:, 0] + xyxy_np[:, 2]) / 2.0
+            cy = (xyxy_np[:, 1] + xyxy_np[:, 3]) / 2.0
+            dx_all = cx - half_size
+            dy_all = cy - half_size
+            distances = dx_all ** 2 + dy_all ** 2
+            min_idx = int(np.argmin(distances))
 
-                xywh_all  = xyxy2xywh(det[:, :4])
-                dx_all    = xywh_all[:, 0] - half_size
-                dy_all    = xywh_all[:, 1] - half_size
-                distances = dx_all ** 2 + dy_all ** 2
-                min_idx   = torch.argmin(distances).item()
+            if is_active:
+                dx    = int(round(dx_all[min_idx]))
+                dy    = int(round(dy_all[min_idx]))
+                box_h = int(round(xyxy_np[min_idx, 3] - xyxy_np[min_idx, 1]))
+                smooth_move(dx, dy, box_h)
 
-                if is_active:
-                    dx    = int(round(dx_all[min_idx].item()))
-                    dy    = int(round(dy_all[min_idx].item()))
-                    box_h = int(round((det[min_idx, 3] - det[min_idx, 1]).item()))
-                    smooth_move(dx, dy, box_h)
+            frame_count += 1
+            if not is_active or frame_count % 5 == 0:
+                dist_display = np.sqrt(distances.astype(np.float32))
+                overlay_dets = []
+                for idx in range(n_det):
+                    x1, y1, x2, y2 = xyxy_np[idx]
+                    conf_val = float(conf_np[idx])
+                    dist     = float(dist_display[idx])
+                    is_tgt   = (idx == min_idx)
+                    overlay_dets.append({
+                        "xyxy"     : [int(x1), int(y1), int(x2), int(y2)],
+                        "label"    : f"D:{dist:.0f} C:{conf_val:.2f}",
+                        "color"    : "#FF4444" if is_tgt else "#00FF00",
+                        "is_target": is_tgt,
+                    })
+                if overlay_dets:
+                    overlay.draw_detections(overlay_dets)
 
-                # 可视化（每 5 帧绘制一次，节省开销）
-                frame_count += 1
-                if not is_active or frame_count % 5 == 0:
-                    dist_display = torch.sqrt(distances.float())
-                    overlay_dets = []
-                    for idx in range(det.shape[0]):
-                        xyxy     = det[idx, :4]
-                        conf_val = det[idx, 4].item()
-                        dist     = dist_display[idx].item()
-                        is_tgt   = (idx == min_idx)
-                        overlay_dets.append({
-                            "xyxy"     : [int(v.item()) for v in xyxy],
-                            "label"    : f"D:{dist:.0f} C:{conf_val:.2f}",
-                            "color"    : "#FF4444" if is_tgt else "#00FF00",
-                            "is_target": is_tgt,
-                        })
-                    if overlay_dets:
-                        overlay.draw_detections(overlay_dets)
-
-                    if not is_active:
-                        annotator = Annotator(im0, line_width=2)
-                        for idx in range(det.shape[0]):
-                            xyxy  = det[idx, :4]
-                            dist  = dist_display[idx].item()
-                            cls   = det[idx, 5].item()
-                            annotator.box_label(xyxy,
-                                                label=f'[{int(cls)}D:{dist:.0f}]',
-                                                color=(34, 139, 34),
-                                                txt_color=(0, 191, 255))
-                        im0 = annotator.result()
-                        cv2.imshow("window", im0)
-                        cv2.waitKey(1)
-            else:
-                overlay.clear_detections()
                 if not is_active:
+                    annotator = Annotator(im0, line_width=2)
+                    for idx in range(n_det):
+                        x1, y1, x2, y2 = xyxy_np[idx]
+                        xyxy_t = torch.tensor([x1, y1, x2, y2])
+                        dist   = float(dist_display[idx])
+                        cls    = int(cls_np[idx])
+                        annotator.box_label(xyxy_t,
+                                            label=f'[{cls}D:{dist:.0f}]',
+                                            color=(34, 139, 34),
+                                            txt_color=(0, 191, 255))
+                    im0 = annotator.result()
+                    cv2.imshow("window", im0)
                     cv2.waitKey(1)
+        else:
+            overlay.clear_detections()
+            if not is_active:
+                cv2.waitKey(1)
 
     print("[推理] 已停止")
 

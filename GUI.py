@@ -94,6 +94,7 @@ class ConfigGUI:
         self.model_var      = None  # 模型路径
         self.fp16_var       = None  # FP16 精度
         self.predict_var    = None  # 运动预测强度
+        self.backend_var    = None  # 推理后端
 
         # 状态标签引用（用于实时刷新）
         self._fps_lbl      = None
@@ -140,6 +141,7 @@ class ConfigGUI:
                 "model":            self.model_var.get(),
                 "fp16":             bool(self.fp16_var.get()),
                 "predict_strength": float(self.predict_var.get()),
+                "backend":          self.backend_var.get().split("（")[0].strip(),
             }
         except Exception:
             return {}
@@ -203,6 +205,7 @@ class ConfigGUI:
         self.model_var      = tk.StringVar(value="./weights/Valorant.pt")
         self.fp16_var       = tk.BooleanVar(value=True)
         self.predict_var    = tk.DoubleVar(value=0.5)
+        self.backend_var    = tk.StringVar(value="auto（自动选择）")
 
     def _poll_state(self):
         """每 200ms 轮询共享状态并刷新 GUI 显示"""
@@ -596,6 +599,8 @@ class ConfigGUI:
 
         rows = [
             ("推理模型",   "entry",    self.model_var,  38),
+            ("推理后端",   "combo",    self.backend_var,
+             ["auto（自动选择）", "trtyolo（TensorRT-YOLO）", "default（原有后端）"]),
             ("推理精度",   "check",    self.fp16_var,   "FP16 半精度（更快）"),
         ]
 
@@ -611,6 +616,11 @@ class ConfigGUI:
                          bg=BG_ENTRY, fg=YELLOW, font=("Consolas", 9),
                          relief=tk.FLAT, insertbackground=WHITE
                          ).grid(row=i, column=1, padx=8, pady=6, sticky="w")
+            elif kind == "combo":
+                var, values = row_cfg[2], row_cfg[3]
+                ttk.Combobox(hw, textvariable=var, style="Dark.TCombobox",
+                             values=values, width=24, state="readonly"
+                             ).grid(row=i, column=1, padx=8, pady=6, sticky="w")
             elif kind == "check":
                 var, text = row_cfg[2], row_cfg[3]
                 tk.Checkbutton(hw, text=text, variable=var,
@@ -621,9 +631,9 @@ class ConfigGUI:
         # 截图范围
         tk.Label(hw, text="截图范围", bg=BG_PANEL, fg=WHITE,
                  font=("Microsoft YaHei", 9), width=10, anchor="w"
-                 ).grid(row=2, column=0, sticky="w", pady=6)
+                 ).grid(row=len(rows), column=0, sticky="w", pady=6)
         sz = tk.Frame(hw, bg=BG_PANEL)
-        sz.grid(row=2, column=1, padx=8, sticky="w")
+        sz.grid(row=len(rows), column=1, padx=8, sticky="w")
         tk.Radiobutton(sz, text="320（低配）", variable=self.fov_size_var, value=320,
                        bg=BG_PANEL, fg=WHITE, selectcolor=BG_MAIN,
                        font=("Microsoft YaHei", 9)).pack(side=tk.LEFT)
